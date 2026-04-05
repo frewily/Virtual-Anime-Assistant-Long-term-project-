@@ -16,6 +16,32 @@
 
 ---
 
+## 开发阶段与接口对应关系
+
+> 采用 MVP 渐进式开发，每个阶段只实现必要的接口
+
+| 阶段 | 目标 | 需实现的接口 | 状态 |
+|------|------|--------------|------|
+| **Phase 1** | MVP验证 | `GET /api/status` | 🔨 开发中 |
+| **Phase 2** | 窗口监控 | `POST /api/report/window`<br>`GET /api/activity/current` | 📋 待开发 |
+| **Phase 3** | 语音合成 | `POST /api/tts/speak`<br>`GET /api/tts/audio/{id}`<br>`GET /api/tts/voices` | 📋 待开发 |
+| **Phase 4** | 智能响应 | `POST /api/message/trigger` | 📋 待开发 |
+| **Phase 5** | 虚拟形象 | `WS /ws/avatar`<br>`GET /api/avatar/status`<br>`POST /api/avatar/action` | 📋 待开发 |
+| **Phase 6** | QQ集成 | `POST /api/message` | 📋 待开发 |
+
+### 开发原则
+
+```
+Phase 1 完成 → 实现 /api/status → 进入 Phase 2
+Phase 2 完成 → 实现 /api/report/* → 进入 Phase 3
+Phase 3 完成 → 实现 /api/tts/* → 进入 Phase 4
+...以此类推
+```
+
+**每个阶段只做一件事，避免过度设计。**
+
+---
+
 ## 1. 系统状态接口
 
 ### 1.1 获取系统状态
@@ -541,4 +567,4 @@ ws://localhost:8080/ws/avatar
 
 ---
 
-*文档版本: v1.0*
+*文档版本: v1.1*
