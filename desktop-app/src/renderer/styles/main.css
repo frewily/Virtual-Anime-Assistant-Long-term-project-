@@ -1,0 +1,22 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    background: transparent;
+    overflow: hidden;
+    -webkit-app-region: drag;
+}
+
+#live2d-container {
+    width: 100%;
+    height: 100%;
+    position: relative;
+}
+
+#live2d-container canvas {
+    width: 100% !important;
+    height: 100% !important;
+}

@@ -1,0 +1,54 @@
+scenarios:
+  - id: high_cpu
+    name: 高负载警告
+    trigger:
+      type: cpu_threshold
+      threshold: 80
+      duration: 30
+    response:
+      expression: worried
+      motion: shake
+      templates:
+        - "主人，电脑好热啊，要不要休息一下？"
+        - "CPU 使用率有点高呢，主人要注意哦~"
+        
+  - id: gaming
+    name: 摸鱼检测
+    trigger:
+      type: app_detect
+      apps: ["原神", "Steam", "游戏"]
+      timeRange:
+        start: "09:00"
+        end: "18:00"
+    response:
+      expression: angry
+      motion: point
+      templates:
+        - "检测到《{appName}》...今天的工作完成了吗？"
+        - "主人又在玩游戏啦~"
+        
+  - id: late_night
+    name: 深夜提醒
+    trigger:
+      type: time_range
+      start: "23:00"
+      end: "06:00"
+    response:
+      expression: sleepy
+      motion: yawn
+      templates:
+        - "已经很晚了，主人早点休息吧~"
+        - "熬夜对身体不好哦..."
+        
+  - id: focus_mode
+    name: 专注提醒
+    trigger:
+      type: app_duration
+      apps: ["VS Code", "IDEA"]
+      duration: 120
+    response:
+      expression: happy
+      motion: wave
+      templates:
+        - "主人专注了很久，喝杯水吧！"
+        - "休息一下，保护眼睛~"

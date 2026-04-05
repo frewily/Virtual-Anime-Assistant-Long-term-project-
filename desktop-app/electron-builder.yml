@@ -1,0 +1,10 @@
+appId: com.assistant.desktop
+productName: Desktop Assistant
+directories:
+  output: dist
+files:
+  - src/**/*
+  - package.json
+win:
+  target: nsis
+  icon: assets/icon.ico

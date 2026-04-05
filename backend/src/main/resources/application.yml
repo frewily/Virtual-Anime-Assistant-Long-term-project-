@@ -1,0 +1,24 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: desktop-assistant
+
+assistant:
+  audio:
+    distribution:
+      qq:
+        enabled: true
+        voice-message: false
+        text-message: true
+      desktop:
+        enabled: true
+        voice: true
+        motion: true
+
+  gpt-sovits:
+    api-url: http://localhost:9880
+
+  edgetts:
+    api-url: https://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1

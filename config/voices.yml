@@ -1,0 +1,24 @@
+voices:
+  - id: character_001
+    name: 小樱
+    description: 活泼可爱的少女声线
+    referenceAudio: character_001.wav
+    promptText: 大家好，我是小樱，很高兴认识你们！
+    defaultParams:
+      top_k: 5
+      top_p: 1.0
+      temperature: 1.0
+      
+  - id: character_002
+    name: 小雪
+    description: 温柔治愈的少女声线
+    referenceAudio: character_002.wav
+    promptText: 你好呀，今天过得怎么样？
+    defaultParams:
+      top_k: 5
+      top_p: 1.0
+      temperature: 1.0
+
+default:
+  voiceId: character_001
+  fallbackVoice: zh-CN-XiaoxiaoNeural
