@@ -1,62 +1,23 @@
 package com.assistant.service;
 
 import com.assistant.model.SystemStatus;
-import org.springframework.stereotype.Service;
-import oshi.SystemInfo;
-import oshi.hardware.CentralProcessor;
-import oshi.hardware.GlobalMemory;
-import oshi.software.os.OSProcess;
-import oshi.software.os.OperatingSystem;
 
-import java.util.concurrent.TimeUnit;
+/**
+ * 系统监控服务接口
+ * 
+ * <p>提供获取系统硬件状态的功能，包括 CPU 使用率、内存使用情况和系统运行时间。</p>
+ * 
+ * @author Assistant
+ * @version 1.0
+ * @since Phase 1
+ * @see SystemStatus
+ */
+public interface SystemMonitorService {
 
-@Service
-public class SystemMonitorService {
-
-    private final SystemInfo systemInfo;
-    private final CentralProcessor processor;
-    private final GlobalMemory memory;
-    private final OperatingSystem os;
-    
-    private long[] prevTicks;
-
-    public SystemMonitorService() {
-        this.systemInfo = new SystemInfo();
-        this.processor = systemInfo.getHardware().getProcessor();
-        this.memory = systemInfo.getHardware().getMemory();
-        this.os = systemInfo.getOperatingSystem();
-        this.prevTicks = processor.getSystemCpuLoadTicks();
-    }
-
-    public SystemStatus getSystemStatus() {
-        double cpuLoad = processor.getSystemCpuLoadBetweenTicks(prevTicks) * 100;
-        prevTicks = processor.getSystemCpuLoadTicks();
-        
-        long totalMemory = memory.getTotal();
-        long availableMemory = memory.getAvailable();
-        long usedMemory = totalMemory - availableMemory;
-        double memoryUsage = (double) usedMemory / totalMemory * 100;
-        
-        long uptimeSeconds = os.getSystemUptime();
-        String uptime = formatUptime(uptimeSeconds);
-        
-        return new SystemStatus(
-            String.format("%.1f%%", cpuLoad),
-            formatMemory(usedMemory),
-            formatMemory(totalMemory),
-            String.format("%.1f%%", memoryUsage),
-            uptime
-        );
-    }
-    
-    private String formatMemory(long bytes) {
-        long gb = bytes / (1024 * 1024 * 1024);
-        return gb + "GB";
-    }
-    
-    private String formatUptime(long seconds) {
-        long hours = seconds / 3600;
-        long minutes = (seconds % 3600) / 60;
-        return hours + "小时" + minutes + "分钟";
-    }
+    /**
+     * 获取系统状态
+     * 
+     * @return SystemStatus 包含 CPU、内存、运行时间的状态对象
+     */
+    SystemStatus getSystemStatus();
 }
