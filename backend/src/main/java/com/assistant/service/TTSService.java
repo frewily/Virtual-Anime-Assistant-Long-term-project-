@@ -1,101 +1,205 @@
 package com.assistant.service;
 
+import com.assistant.config.VoiceConfig;
+import com.assistant.model.TTSRequest;
+import com.assistant.model.TTSResponse;
+import com.assistant.model.VoiceInfo;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
-/**
- * 语音合成服务
- * 
- * <p>提供文字转语音功能，支持 GPT-SoVITS 自定义声线和 EdgeTTS 备用声线。</p>
- * 
- * <p>实现阶段：Phase 3 (语音合成)</p>
- * 
- * <p>核心功能：</p>
- * <ul>
- *   <li>调用 GPT-SoVITS API 生成自定义声线语音</li>
- *   <li>调用 EdgeTTS API 作为备用方案</li>
- *   <li>管理多个声线配置</li>
- *   <li>缓存生成的音频文件</li>
- * </ul>
- * 
- * <p>技术架构：</p>
- * <pre>
- * Spring Boot 后端
- *     ↓
- * TTSService.synthesize()
- *     ↓
- * ┌─────────────────────────────────────┐
- * │  优先：GPT-SoVITS (localhost:9880)  │
- * │  备用：EdgeTTS (HTTP API)           │
- * └─────────────────────────────────────┘
- *     ↓
- * 返回音频文件 URL
- * </pre>
- * 
- * <p>GPT-SoVITS 调用：</p>
- * <pre>
- * POST http://localhost:9880/tts
- * {
- *   "text": "主人你好",
- *   "refer_wav_path": "character_001.wav",
- *   "prompt_text": "参考音频的文字",
- *   "top_k": 5,
- *   "top_p": 1.0,
- *   "temperature": 1.0
- * }
- * </pre>
- * 
- * <p>EdgeTTS 调用：</p>
- * <pre>
- * GET https://speech.platform.bing.com/...?voice=zh-CN-XiaoxiaoNeural&text=...
- * </pre>
- * 
- * <p>后续扩展：</p>
- * <ul>
- *   <li>添加音频缓存机制</li>
- *   <li>支持语速、音调调节</li>
- *   <li>支持 SSML 标记</li>
- * </ul>
- * 
- * @author Assistant
- * @version 1.0
- * @since Phase 3
- * @see com.assistant.controller.TTSController
- * @see com.assistant.config.VoiceConfig
- */
+import java.io.File;
+import java.io.InputStream;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.Duration;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+
 @Service
 public class TTSService {
 
-    /**
-     * 合成语音
-     * 
-     * <p>将文字转换为语音，优先使用 GPT-SoVITS，失败时使用 EdgeTTS。</p>
-     * 
-     * <p>TODO: Phase 3 实现</p>
-     * 
-     * @param text 要合成的文字
-     * @param voiceId 声线 ID（GPT-SoVITS）
-     * @param fallbackVoice 备用声线（EdgeTTS）
-     * @return 音频文件 URL 或 Base64 数据
-     */
-    public String synthesize(String text, String voiceId, String fallbackVoice) {
-        // TODO: Phase 3 实现
-        // 1. 尝试调用 GPT-SoVITS
-        // 2. 失败则调用 EdgeTTS
-        // 3. 返回音频 URL
+    private final VoiceConfig voiceConfig;
+    private final HttpClient httpClient;
+    private final Map<String, byte[]> audioCache = new ConcurrentHashMap<>();
+    private final Map<String, String> audioFormatCache = new ConcurrentHashMap<>();
+
+    @Value("${assistant.gpt-sovits.api-url:http://localhost:9880}")
+    private String gptSovitsUrl;
+
+    @Value("${assistant.gpt-sovits.timeout:30000}")
+    private int gptSovitsTimeout;
+
+    public TTSService(VoiceConfig voiceConfig) {
+        this.voiceConfig = voiceConfig;
+        this.httpClient = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(10))
+                .build();
+    }
+
+    public TTSResponse synthesize(TTSRequest request) {
+        String voiceId = request.getVoiceId();
+        String fallbackVoice = request.getFallbackVoice();
+
+        if (voiceId == null || voiceId.isEmpty()) {
+            VoiceInfo defaultVoice = voiceConfig.getDefaultVoice();
+            voiceId = defaultVoice != null ? defaultVoice.getId() : null;
+        }
+        if (fallbackVoice == null || fallbackVoice.isEmpty()) {
+            fallbackVoice = voiceConfig.getDefaultFallbackVoice();
+        }
+
+        TTSAttempt result = tryGptSovits(request.getText(), voiceId);
+        if (result == null) {
+            result = tryEdgeTTS(request.getText(), fallbackVoice);
+        }
+        if (result == null) {
+            result = tryMacOSSay(request.getText());
+        }
+
+        if (result != null) {
+            String audioId = UUID.randomUUID().toString();
+            audioCache.put(audioId, result.audioBytes);
+            audioFormatCache.put(audioId, result.format);
+            return TTSResponse.success(audioId, result.format, 0, result.voice);
+        }
+
+        return TTSResponse.fail("All TTS engines failed");
+    }
+
+    public byte[] getAudioBytes(String audioId) {
+        return audioCache.get(audioId);
+    }
+
+    public String getAudioFormat(String audioId) {
+        return audioFormatCache.get(audioId);
+    }
+
+    private TTSAttempt tryGptSovits(String text, String voiceId) {
+        try {
+            VoiceInfo voice = voiceConfig.getVoice(voiceId);
+            String refAudio = voice != null ? voice.getReferenceAudio() : "";
+            String promptText = voice != null ? voice.getPromptText() : "";
+
+            String jsonBody = "{"
+                    + "\"text\":\"" + escapeJson(text) + "\","
+                    + "\"text_language\":\"zh\","
+                    + "\"prompt_text\":\"" + escapeJson(promptText) + "\","
+                    + "\"prompt_language\":\"zh\","
+                    + "\"refer_wav_path\":\"" + escapeJson(refAudio) + "\""
+                    + "}";
+
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(gptSovitsUrl + "/tts"))
+                    .header("Content-Type", "application/json")
+                    .timeout(Duration.ofMillis(gptSovitsTimeout))
+                    .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
+                    .build();
+
+            HttpResponse<byte[]> response = httpClient.send(request, HttpResponse.BodyHandlers.ofByteArray());
+
+            if (response.statusCode() == 200 && response.body() != null && response.body().length > 0) {
+                System.out.println("GPT-SoVITS synthesized: " + text);
+                return new TTSAttempt(response.body(), "wav", "gpt-sovits:" + voiceId);
+            }
+        } catch (Exception e) {
+            System.out.println("GPT-SoVITS failed: " + e.getMessage());
+        }
         return null;
     }
 
-    /**
-     * 获取所有可用声线
-     * 
-     * <p>从配置文件加载声线列表。</p>
-     * 
-     * <p>TODO: Phase 3 实现</p>
-     * 
-     * @return 声线列表
-     */
-    public Object getVoices() {
-        // TODO: Phase 3 实现
+    private TTSAttempt tryEdgeTTS(String text, String voice) {
+        try {
+            Path tempFile = Files.createTempFile("tts_edge_", ".mp3");
+            ProcessBuilder pb = new ProcessBuilder(
+                    "/Library/Frameworks/Python.framework/Versions/3.14/bin/python3", "-m", "edge_tts",
+                    "--voice", voice != null ? voice : "zh-CN-XiaoxiaoNeural",
+                    "--text", text,
+                    "--write-media", tempFile.toAbsolutePath().toString());
+            pb.redirectErrorStream(true);
+            Process process = pb.start();
+            process.waitFor();
+
+            byte[] audioBytes = Files.readAllBytes(tempFile);
+            Files.deleteIfExists(tempFile);
+
+            if (audioBytes.length > 0) {
+                System.out.println("EdgeTTS synthesized: " + text);
+                return new TTSAttempt(audioBytes, "mp3", "edgetts:" + voice);
+            }
+        } catch (Exception e) {
+            System.out.println("EdgeTTS failed: " + e.getMessage());
+        }
         return null;
+    }
+
+    private TTSAttempt tryMacOSSay(String text) {
+        try {
+            Path tempFile = Files.createTempFile("tts_say_", ".aiff");
+            String outputPath = tempFile.toAbsolutePath().toString().replace(".aiff", "");
+            ProcessBuilder pb = new ProcessBuilder(
+                    "say", "-v", "Tingting", "-o", outputPath, text);
+            pb.redirectErrorStream(true);
+            Process process = pb.start();
+
+            try (InputStream is = process.getInputStream()) {
+                is.readAllBytes();
+            }
+            process.waitFor();
+
+            File aiffFile = new File(outputPath + ".aiff");
+            if (aiffFile.exists()) {
+                Path wavFile = Files.createTempFile("tts_say_wav_", ".wav");
+                ProcessBuilder convertPb = new ProcessBuilder(
+                        "afconvert", "-f", "WAVE", "-d", "LEI16",
+                        aiffFile.getAbsolutePath(), wavFile.toAbsolutePath().toString());
+                convertPb.redirectErrorStream(true);
+                Process convertProcess = convertPb.start();
+                convertProcess.waitFor();
+                aiffFile.delete();
+
+                byte[] audioBytes = Files.readAllBytes(wavFile);
+                wavFile.toFile().delete();
+
+                if (audioBytes.length > 0) {
+                    System.out.println("macOS say synthesized: " + text);
+                    return new TTSAttempt(audioBytes, "wav", "macos-say");
+                }
+            }
+        } catch (Exception e) {
+            System.out.println("macOS say failed: " + e.getMessage());
+        }
+        return null;
+    }
+
+    private String escapeJson(String s) {
+        if (s == null)
+            return "";
+        return s.replace("\\", "\\\\")
+                .replace("\"", "\\\"")
+                .replace("\n", "\\n")
+                .replace("\r", "\\r")
+                .replace("\t", "\\t");
+    }
+
+    public List<VoiceInfo> getVoices() {
+        return voiceConfig.getAllVoices();
+    }
+
+    private static class TTSAttempt {
+        final byte[] audioBytes;
+        final String format;
+        final String voice;
+
+        TTSAttempt(byte[] audioBytes, String format, String voice) {
+            this.audioBytes = audioBytes;
+            this.format = format;
+            this.voice = voice;
+        }
     }
 }

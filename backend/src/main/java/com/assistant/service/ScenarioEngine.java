@@ -1,107 +1,255 @@
 package com.assistant.service;
 
+import com.assistant.model.ActivityReport;
+import com.assistant.model.ReplyAction;
+import com.assistant.model.SystemStatus;
+import jakarta.annotation.PostConstruct;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.yaml.snakeyaml.Yaml;
 
-/**
- * 场景检测引擎
- * 
- * <p>根据系统状态、活动窗口、时间等信息检测场景，触发相应的响应动作。</p>
- * 
- * <p>实现阶段：Phase 4 (智能响应)</p>
- * 
- * <p>核心功能：</p>
- * <ul>
- *   <li>检测高负载场景（CPU/内存过高）</li>
- *   <li>检测摸鱼场景（工作时间玩游戏）</li>
- *   <li>检测深夜场景（提醒休息）</li>
- *   <li>检测专注场景（长时间使用 IDE）</li>
- * </ul>
- * 
- * <p>场景检测流程：</p>
- * <pre>
- * 定时任务（每 5 秒）
- *     ↓
- * ScenarioEngine.detect()
- *     ↓
- * ┌─────────────────────────────────────┐
- * │  检测条件                           │
- * │  - CPU > 80% ?                      │
- * │  - 当前时间是深夜 ?                  │
- * │  - 当前应用是游戏 ?                  │
- * │  - IDE 使用时长 > 2h ?              │
- * └─────────────────────────────────────┘
- *     ↓
- * 匹配场景规则
- *     ↓
- * 生成响应（台词 + 表情 + 动作）
- *     ↓
- * 调用 MessageRouterService 分发
- * </pre>
- * 
- * <p>场景配置示例（scenarios.yml）：</p>
- * <pre>
- * scenarios:
- *   - id: high_cpu
- *     name: 高负载警告
- *     trigger:
- *       type: cpu_threshold
- *       threshold: 80
- *       duration: 30
- *     response:
- *       expression: worried
- *       motion: shake
- *       templates:
- *         - "主人，电脑好热啊，要不要休息一下？"
- * </pre>
- * 
- * <p>后续扩展：</p>
- * <ul>
- *   <li>支持自定义场景规则</li>
- *   <li>支持场景优先级</li>
- *   <li>支持场景冷却时间</li>
- *   <li>支持机器学习预测场景</li>
- * </ul>
- * 
- * @author Assistant
- * @version 1.0
- * @since Phase 4
- * @see MessageRouterService
- * @see com.assistant.model.ReplyAction
- */
+import java.io.FileInputStream;
+import java.io.InputStream;
+import java.time.LocalTime;
+import java.time.format.DateTimeFormatter;
+import java.util.*;
+
 @Service
 public class ScenarioEngine {
 
-    /**
-     * 执行场景检测
-     * 
-     * <p>检查所有场景规则，返回匹配的场景响应。</p>
-     * 
-     * <p>TODO: Phase 4 实现</p>
-     * 
-     * @return 匹配的场景响应，如果没有匹配则返回 null
-     */
-    public Object detect() {
-        // TODO: Phase 4 实现
-        // 1. 获取当前系统状态
-        // 2. 获取当前活动窗口
-        // 3. 检查所有场景规则
-        // 4. 返回匹配的场景响应
+    private static final long COOLDOWN_MS = 5 * 60 * 1000;
+
+    private final SystemMonitorService systemMonitor;
+    private final ActivityService activityService;
+
+    @Value("${assistant.scenarios.config-path:../config/scenarios.yml}")
+    private String configPath;
+
+    private List<ScenarioDef> scenarios = new ArrayList<>();
+    private final Map<String, Long> lastTriggerTime = new HashMap<>();
+    private final Map<String, Long> appStartTimes = new HashMap<>();
+    private final Random random = new Random();
+
+    public ScenarioEngine(SystemMonitorService systemMonitor, ActivityService activityService) {
+        this.systemMonitor = systemMonitor;
+        this.activityService = activityService;
+    }
+
+    @PostConstruct
+    public void loadScenarios() {
+        try (InputStream input = new FileInputStream(configPath)) {
+            Yaml yaml = new Yaml();
+            Map<String, Object> data = yaml.load(input);
+
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> list = (List<Map<String, Object>>) data.get("scenarios");
+            if (list != null) {
+                for (Map<String, Object> item : list) {
+                    ScenarioDef def = new ScenarioDef();
+                    def.id = (String) item.get("id");
+                    def.name = (String) item.get("name");
+
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> trigger = (Map<String, Object>) item.get("trigger");
+                    if (trigger != null) {
+                        def.triggerType = (String) trigger.get("type");
+                        def.threshold = trigger.get("threshold") instanceof Integer
+                                ? ((Integer) trigger.get("threshold")).doubleValue()
+                                : null;
+                        def.triggerApps = castToStringList(trigger.get("apps"));
+                        def.durationSeconds = trigger.get("duration") instanceof Integer
+                                ? ((Integer) trigger.get("duration")).longValue()
+                                : null;
+
+                        @SuppressWarnings("unchecked")
+                        Map<String, Object> timeRange = (Map<String, Object>) trigger.get("timeRange");
+                        if (timeRange != null) {
+                            def.timeStart = (String) timeRange.get("start");
+                            def.timeEnd = (String) timeRange.get("end");
+                        }
+                    }
+
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> response = (Map<String, Object>) item.get("response");
+                    if (response != null) {
+                        def.expression = (String) response.get("expression");
+                        def.motion = (String) response.get("motion");
+                        def.templates = castToStringList(response.get("templates"));
+                    }
+
+                    scenarios.add(def);
+                }
+            }
+            System.out.println("Loaded " + scenarios.size() + " scenarios from " + configPath);
+        } catch (Exception e) {
+            System.err.println("Failed to load scenarios config: " + e.getMessage());
+        }
+    }
+
+    public List<ReplyAction> detect() {
+        List<ReplyAction> actions = new ArrayList<>();
+
+        for (ScenarioDef scenario : scenarios) {
+            if (isInCooldown(scenario.id))
+                continue;
+
+            boolean matched = switch (scenario.triggerType) {
+                case "cpu_threshold" -> checkCpuThreshold(scenario);
+                case "app_detect" -> checkAppDetect(scenario);
+                case "time_range" -> checkTimeRange(scenario);
+                case "app_duration" -> checkAppDuration(scenario);
+                default -> false;
+            };
+
+            if (matched) {
+                ReplyAction action = buildAction(scenario);
+                action.setSendToDesktop(true);
+                actions.add(action);
+                lastTriggerTime.put(scenario.id, System.currentTimeMillis());
+                System.out.println("Scenario triggered: " + scenario.name);
+            }
+        }
+
+        return actions;
+    }
+
+    public ReplyAction trigger(String scenarioId) {
+        ScenarioDef scenario = scenarios.stream()
+                .filter(s -> s.id.equals(scenarioId))
+                .findFirst()
+                .orElse(null);
+        if (scenario == null)
+            return null;
+
+        ReplyAction action = buildAction(scenario);
+        action.setSendToDesktop(true);
+        return action;
+    }
+
+    private ReplyAction buildAction(ScenarioDef scenario) {
+        ReplyAction action = new ReplyAction();
+        action.setExpression(scenario.expression);
+        action.setMotion(scenario.motion);
+        action.setSendToDesktop(true);
+
+        if (scenario.templates != null && !scenario.templates.isEmpty()) {
+            String text = scenario.templates.get(random.nextInt(scenario.templates.size()));
+            ActivityReport activity = activityService.getCurrentActivity();
+            if (activity != null && activity.getAppId() != null) {
+                text = text.replace("{appName}", activity.getAppId());
+            }
+            action.setText(text);
+        }
+
+        return action;
+    }
+
+    private boolean checkCpuThreshold(ScenarioDef scenario) {
+        try {
+            SystemStatus status = systemMonitor.getSystemStatus();
+            String cpuStr = status.cpuUsage().replace("%", "");
+            double cpu = Double.parseDouble(cpuStr);
+            return cpu >= (scenario.threshold != null ? scenario.threshold : 80);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private boolean checkAppDetect(ScenarioDef scenario) {
+        if (scenario.triggerApps == null || scenario.triggerApps.isEmpty())
+            return false;
+
+        ActivityReport activity = activityService.getCurrentActivity();
+        if (activity == null || activity.getAppId() == null)
+            return false;
+
+        String currentApp = activity.getAppId().toLowerCase();
+        boolean appMatches = scenario.triggerApps.stream()
+                .map(String::toLowerCase)
+                .anyMatch(a -> currentApp.contains(a) || currentApp.equals(a));
+
+        if (!appMatches)
+            return false;
+
+        if (scenario.timeStart != null && scenario.timeEnd != null) {
+            LocalTime now = LocalTime.now();
+            LocalTime start = LocalTime.parse(scenario.timeStart, DateTimeFormatter.ofPattern("HH:mm"));
+            LocalTime end = LocalTime.parse(scenario.timeEnd, DateTimeFormatter.ofPattern("HH:mm"));
+            if (now.isBefore(start) || now.isAfter(end))
+                return false;
+        }
+
+        return true;
+    }
+
+    private boolean checkTimeRange(ScenarioDef scenario) {
+        if (scenario.timeStart == null || scenario.timeEnd == null)
+            return false;
+
+        LocalTime now = LocalTime.now();
+        LocalTime start = LocalTime.parse(scenario.timeStart, DateTimeFormatter.ofPattern("HH:mm"));
+        LocalTime end = LocalTime.parse(scenario.timeEnd, DateTimeFormatter.ofPattern("HH:mm"));
+
+        if (start.isBefore(end)) {
+            return !now.isBefore(start) && !now.isAfter(end);
+        } else {
+            return !now.isBefore(start) || !now.isAfter(end);
+        }
+    }
+
+    private boolean checkAppDuration(ScenarioDef scenario) {
+        if (scenario.triggerApps == null || scenario.triggerApps.isEmpty())
+            return false;
+        if (scenario.durationSeconds == null)
+            return false;
+
+        ActivityReport activity = activityService.getCurrentActivity();
+        if (activity == null || activity.getAppId() == null)
+            return false;
+
+        String currentApp = activity.getAppId().toLowerCase();
+        boolean appMatches = scenario.triggerApps.stream()
+                .map(String::toLowerCase)
+                .anyMatch(a -> currentApp.contains(a) || currentApp.equals(a));
+
+        if (!appMatches) {
+            appStartTimes.remove(currentApp);
+            return false;
+        }
+
+        long now = System.currentTimeMillis();
+        appStartTimes.putIfAbsent(currentApp, now);
+        long elapsed = (now - appStartTimes.get(currentApp)) / 1000;
+
+        return elapsed >= scenario.durationSeconds;
+    }
+
+    private boolean isInCooldown(String scenarioId) {
+        Long lastTime = lastTriggerTime.get(scenarioId);
+        if (lastTime == null)
+            return false;
+        return (System.currentTimeMillis() - lastTime) < COOLDOWN_MS;
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<String> castToStringList(Object obj) {
+        if (obj instanceof List) {
+            return (List<String>) obj;
+        }
         return null;
     }
 
-    /**
-     * 手动触发场景
-     * 
-     * <p>用于测试或手动触发特定场景。</p>
-     * 
-     * <p>TODO: Phase 4 实现</p>
-     * 
-     * @param scenarioId 场景 ID
-     * @param params 场景参数
-     * @return 场景响应
-     */
-    public Object trigger(String scenarioId, Object params) {
-        // TODO: Phase 4 实现
-        return null;
+    private static class ScenarioDef {
+        String id;
+        String name;
+        String triggerType;
+        Double threshold;
+        List<String> triggerApps;
+        Long durationSeconds;
+        String timeStart;
+        String timeEnd;
+        String expression;
+        String motion;
+        List<String> templates;
     }
 }

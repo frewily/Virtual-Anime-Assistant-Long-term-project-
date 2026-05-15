@@ -1,79 +1,84 @@
 package com.assistant.config;
 
+import com.assistant.model.VoiceInfo;
+import jakarta.annotation.PostConstruct;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Configuration;
+import org.yaml.snakeyaml.Yaml;
 
-/**
- * 声线配置类
- * 
- * <p>管理 GPT-SoVITS 和 EdgeTTS 的声线配置。</p>
- * 
- * <p>实现阶段：Phase 3 (语音合成)</p>
- * 
- * <p>核心功能：</p>
- * <ul>
- *   <li>加载 voices.yml 配置文件</li>
- *   <li>管理多个声线配置</li>
- *   <li>提供声线查询接口</li>
- * </ul>
- * 
- * <p>配置文件结构（config/voices.yml）：</p>
- * <pre>
- * voices:
- *   - id: character_001
- *     name: 小樱
- *     description: 活泼可爱的少女声线
- *     referenceAudio: character_001.wav
- *     promptText: 大家好，我是小樱，很高兴认识你们！
- *     defaultParams:
- *       top_k: 5
- *       top_p: 1.0
- *       temperature: 1.0
- *       
- *   - id: character_002
- *     name: 小雪
- *     description: 温柔治愈的少女声线
- *     referenceAudio: character_002.wav
- *     promptText: 你好呀，今天过得怎么样？
- *     defaultParams:
- *       top_k: 5
- *       top_p: 1.0
- *       temperature: 1.0
- * 
- * default:
- *   voiceId: character_001
- *   fallbackVoice: zh-CN-XiaoxiaoNeural
- * </pre>
- * 
- * <p>声线切换流程：</p>
- * <pre>
- * 用户请求语音合成
- *     ↓
- * VoiceConfig.getVoice(voiceId)
- *     ↓
- * 返回声线配置（referenceAudio + promptText）
- *     ↓
- * TTSService 调用 GPT-SoVITS
- * </pre>
- * 
- * <p>后续扩展：</p>
- * <ul>
- *   <li>支持动态添加声线</li>
- *   <li>支持声线预览</li>
- *   <li>支持声线参数调优</li>
- * </ul>
- * 
- * @author Assistant
- * @version 1.0
- * @since Phase 3
- * @see com.assistant.service.TTSService
- */
+import java.io.FileInputStream;
+import java.io.InputStream;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
+
 @Configuration
 public class VoiceConfig {
 
-    // TODO: Phase 3 实现
-    // 1. 使用 @ConfigurationProperties 加载 voices.yml
-    // 2. 提供 getVoice(String id) 方法
-    // 3. 提供 getDefaultVoice() 方法
-    // 4. 提供 getAllVoices() 方法
+    @Value("${assistant.voice.config-path:../config/voices.yml}")
+    private String configPath;
 
+    private List<VoiceInfo> voices = new ArrayList<>();
+    private String defaultVoiceId = "character_001";
+    private String defaultFallbackVoice = "zh-CN-XiaoxiaoNeural";
+
+    @PostConstruct
+    public void loadVoices() {
+        try (InputStream input = new FileInputStream(configPath)) {
+            Yaml yaml = new Yaml();
+            Map<String, Object> data = yaml.load(input);
+
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> voiceList = (List<Map<String, Object>>) data.get("voices");
+            if (voiceList != null) {
+                for (Map<String, Object> v : voiceList) {
+                    VoiceInfo info = new VoiceInfo();
+                    info.setId((String) v.get("id"));
+                    info.setName((String) v.get("name"));
+                    info.setDescription((String) v.get("description"));
+                    info.setReferenceAudio((String) v.get("referenceAudio"));
+                    info.setPromptText((String) v.get("promptText"));
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> params = (Map<String, Object>) v.get("defaultParams");
+                    info.setDefaultParams(params);
+                    voices.add(info);
+                }
+            }
+
+            @SuppressWarnings("unchecked")
+            Map<String, Object> defaults = (Map<String, Object>) data.get("default");
+            if (defaults != null) {
+                if (defaults.get("voiceId") != null) {
+                    defaultVoiceId = (String) defaults.get("voiceId");
+                }
+                if (defaults.get("fallbackVoice") != null) {
+                    defaultFallbackVoice = (String) defaults.get("fallbackVoice");
+                }
+            }
+
+            System.out.println("Loaded " + voices.size() + " voices from " + configPath);
+        } catch (Exception e) {
+            System.err.println("Failed to load voices config: " + e.getMessage());
+        }
+    }
+
+    public VoiceInfo getVoice(String voiceId) {
+        return voices.stream()
+                .filter(v -> v.getId().equals(voiceId))
+                .findFirst()
+                .orElse(null);
+    }
+
+    public VoiceInfo getDefaultVoice() {
+        return getVoice(defaultVoiceId);
+    }
+
+    public String getDefaultFallbackVoice() {
+        return defaultFallbackVoice;
+    }
+
+    public List<VoiceInfo> getAllVoices() {
+        return Collections.unmodifiableList(voices);
+    }
 }

@@ -50,6 +50,12 @@ public class ActivityReport {
     private String appId;
     
     /** 
+     * 应用名称
+     * <p>人类可读的应用名，如 "VS Code"、"Google Chrome"、"IntelliJ IDEA"</p>
+     */
+    private String appName;
+    
+    /** 
      * 窗口完整标题
      * <p>如 "Main.java — Visual Studio Code"</p>
      */
@@ -77,6 +83,24 @@ public class ActivityReport {
      */
     public void setAppId(String appId) {
         this.appId = appId;
+    }
+
+    /**
+     * 获取应用名称
+     * 
+     * @return 应用名称，如 "VS Code"
+     */
+    public String getAppName() {
+        return appName;
+    }
+
+    /**
+     * 设置应用名称
+     * 
+     * @param appName 应用名称
+     */
+    public void setAppName(String appName) {
+        this.appName = appName;
     }
 
     /**
