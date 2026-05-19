@@ -56,6 +56,9 @@ desktop-app/src/renderer/assets/models/**/*.moc3
 *.mp3
 *.silk
 
+# QQ Bot Docker data
+qq-bot/data/
+
 # Temp
 tmp/
 temp/
